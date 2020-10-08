@@ -1,3 +1,23 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+bld/
+[Oo]bj/
+[Ll]og/
+[Bb]in/
+[Dd]eploy/
+[Pp]ackages/
+
+# Visual C++ project user files
+*.vcxproj.user
+
+# Visual Studio cache/options directory
+.vs/
+
 # Prerequisites
 *.d
 

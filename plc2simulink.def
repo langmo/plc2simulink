@@ -1,0 +1,4 @@
+LIBRARY PLC2SIMULINK.mexw64
+
+EXPORTS
+mexFunction
