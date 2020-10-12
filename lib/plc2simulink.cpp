@@ -10,7 +10,7 @@
 #error PLCSimAdvancedSFunction requires Microsoft Windows
 #endif
 
-#define S_FUNCTION_NAME SPSVirtualLab
+#define S_FUNCTION_NAME plc2simulink
 #define S_FUNCTION_LEVEL 2
 
 // Activate additional MEX functions which are used in this model.
@@ -24,184 +24,122 @@
 #include "PLCConnection.h"
 #include "helper_functions.h"
 
-/*** Global Defines ***/
-
-
-
-
 /* Simulink Block Parameters */
-static const int SFCT_NUM_PARAMETERS = 6;
-static const int ParameterIndex_InstanceName		= 0;
-static const int ParameterIndex_InputPortCount	= 1;
-static const int ParameterIndex_OutputPortCount	= 2;
-static const int ParameterIndex_SampleTime = 3;
-static const int ParameterIndex_ScaleFactor		= 4;
-static const int ParameterIndex_Synchronization	= 5;
-
-
-/* Reference time to be mapped to time 0.0 in Simulink */
-static const SYSTEMTIME basePLCSimTime =
+enum BlockParameters
 {
-  2000,	// WORD wYear;
-  1,	// WORD wMonth;
-  0,	// WORD wDayOfWeek;
-  1,	// WORD wDay;
-  0,	// WORD wHour;
-  0,	// WORD wMinute;
-  0,	// WORD wSecond;
-  0		// WORD wMilliseconds;
+	BlockParameter_InstanceName,
+	BlockParameter_SupplyVoltageExplicit,
+	BlockParameter_InputPortCount,
+	BlockParameter_OutputPortCount,
+	BlockParameter_SampleTime,
+	BlockParameter_ScaleFactor,
+
+	BLOCK_PARAMETERS_LAST = BlockParameter_ScaleFactor
 };
 
-static void setPLC(SimStruct* S, PLCConnection* plc)
+/**
+** Saves a pointer to the PLC in the block working variables, such that it can be retrieved in subsequent simulation cycles.
+**/
+void SetBlockPLC(SimStruct* S, PLCConnection* plc)
 {
 	void** PWork = ssGetPWork(S);
 	PWork[0] = plc;
 }
-static PLCConnection* getPLC(SimStruct* S)
+/**
+** Retrieves a previously, in the block's working variables, saved pointer to the PLC. Returns NULL if PLC was not set, yet.
+**/
+PLCConnection* GetBlockPLC(SimStruct* S)
 {
 	void** PWork = ssGetPWork(S);
-	if(PWork == NULL)
+	if (PWork == NULL)
 	{
 		return NULL;
 	}
-	if(PWork[0] == NULL)
+	if (PWork[0] == NULL)
 	{
 		return NULL;
 	}
 	return (PLCConnection*)PWork[0];
 }
-/* Convert SYSTEMTIME to ULONGLONG (number of 100-nanosecond intervals since January 1, 1601 (UTC)) */
-static ULONGLONG SystemTimeToULongLong(SYSTEMTIME s)
-{
-	FILETIME t;
-	if (!SystemTimeToFileTime(&s,&t))
-	{
-        ::PrintText("Error: Could not convert SYSTEMTIME to FILETIME (error code %d).", GetLastError());
-        return 0;
-    }
-	ULARGE_INTEGER i;
-	i.LowPart = t.dwLowDateTime;
-	i.HighPart = t.dwHighDateTime;
-	return i.QuadPart;
-}
 
-/* Convert ULONGLONG (number of 100-nanosecond intervals since January 1, 1601 (UTC)) to SYSTEMTIME */
-static SYSTEMTIME ULongLongToSystemTime(ULONGLONG u)
-{
-	ULARGE_INTEGER i;
-	i.QuadPart = u;
-	FILETIME t;
-	t.dwLowDateTime = i.LowPart;
-	t.dwHighDateTime = i.HighPart;
-	SYSTEMTIME s;
-	if (!FileTimeToSystemTime(&t,&s))
-	{
-        ::PrintText("Could not convert FILETIME to SYSTEMTIME (error code %d).", GetLastError());
-		ZeroMemory(&s,sizeof(s));
-        return s;
-    }
-	return s;
-}
-
-/* Convert Simulink time (time_T) to PLCSim time, using the PLCSim base time */
-static SYSTEMTIME ConvertSimulinkTimeToPLCSimTime(time_T simulinkTime)
-{
-	ULONGLONG plcsimBlockTime = (ULONGLONG)(simulinkTime * 10000000);
-	ULONGLONG basePlcsimTimeULL = SystemTimeToULongLong(basePLCSimTime);
-	return ULongLongToSystemTime(plcsimBlockTime + basePlcsimTimeULL);
-}
-
-/* Convert PLCSim time to SYSTEMTIME Simulink time (time_T), using the PLCSim base time */
-static time_T ConvertPLCSimTimeToSimulinkTime(SYSTEMTIME plcsimTime)
-{
-	ULONGLONG plcsimTimeULL = SystemTimeToULongLong(plcsimTime);
-	ULONGLONG basePlcsimTimeULL = SystemTimeToULongLong(basePLCSimTime);
-	ULONGLONG plcsimBlockTime = plcsimTimeULL - basePlcsimTimeULL;
-	return ((time_T)plcsimBlockTime) / 10000000;
-}
-
-/* Invert the byte order of a byte array, non-destructive */
-inline static void InvertByteOrder(BYTE inbytes[], BYTE outbytes[], int_T numbytes)
-{
-	for (int_T b = 0; b < numbytes; ++b)
-	{
-		outbytes[b] = inbytes[numbytes - 1 - b];
-	}
-}
-
-/* Invert the byte order of a byte array, in place */
-inline static void InvertByteOrder(BYTE inoutbytes[], int_T numbytes)
-{
-	for (int_T b1 = 0; b1 < (numbytes / 2); ++b1)
-	{
-		int_T b2 = numbytes - 1 - b1;
-		inoutbytes[b1] ^= inoutbytes[b2];
-		inoutbytes[b2] ^= inoutbytes[b1];
-		inoutbytes[b1] ^= inoutbytes[b2];
-	}
-}
-
-
-inline static boolean_T checkIODataType(DTypeId dataType)
-{
-	boolean_T isAcceptable =
-		(dataType == SS_DOUBLE ||
-			dataType == SS_SINGLE ||
-			dataType == SS_INT8 ||
-			dataType == SS_UINT8 ||
-			dataType == SS_INT16 ||
-			dataType == SS_UINT16 ||
-			dataType == SS_INT32 ||
-			dataType == SS_UINT32 ||
-			dataType == SS_BOOLEAN);
-
-	return isAcceptable;
-}
-
-/*** Behavior Functions ***/
-template<typename T> bool convertInputToBool(InputPtrsType inputPtr)
-{
-	return ((T)inputPtr) != 0;
-}
-inline bool getInputAsBool(SimStruct* S, int_T port)
+bool GetInputAsBool(SimStruct* S, int_T port)
 {
 	DTypeId   dataType = ssGetInputPortDataType(S, port);
 	InputPtrsType dataPtr = ssGetInputPortSignalPtrs(S, port);
 	switch (dataType)
 	{
 	case SS_DOUBLE:
-		return *((InputRealPtrsType)dataPtr[0]) != 0;
+		return *(((InputRealPtrsType)dataPtr)[0]) != 0;
 		break;
-		case SS_SINGLE:
-			return *((InputReal32PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_INT8:
-			return *((InputInt8PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_UINT8:
-			return *((InputUInt8PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_INT16:
-			return *((InputInt16PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_UINT16:
-			return *((InputUInt16PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_INT32:
-			return *((InputInt32PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_UINT32:
-			return *((InputUInt32PtrsType)dataPtr[0]) != 0;
-			break;
-		case SS_BOOLEAN:
-			return *((InputBooleanPtrsType)dataPtr[0]) != 0;
-			break;
-		default:
-			throw ::CreateException("Input %d has invalid type %d.", port, dataType);
-			break;
+	case SS_SINGLE:
+		return *(((InputReal32PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_INT8:
+		return *(((InputInt8PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_UINT8:
+		return *(((InputUInt8PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_INT16:
+		return *(((InputInt16PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_UINT16:
+		return *(((InputUInt16PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_INT32:
+		return *(((InputInt32PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_UINT32:
+		return *(((InputUInt32PtrsType)dataPtr)[0]) != 0;
+		break;
+	case SS_BOOLEAN:
+		return *(((InputBooleanPtrsType)dataPtr)[0]) != 0;
+		break;
+	default:
+		throw ::CreateException("Input %d has invalid type %d.", port, dataType);
+		break;
 	}
 }
-inline void setOutputAsBool(SimStruct* S, int_T port, bool value)
+const real_T GetInputAsReal(SimStruct* S, int_T port)
+{
+	DTypeId   dataType = ssGetInputPortDataType(S, port);
+	InputPtrsType dataPtr = ssGetInputPortSignalPtrs(S, port);
+
+	switch (dataType)
+	{
+	case SS_DOUBLE:
+		return *(((InputRealPtrsType)dataPtr)[0]);
+		break;
+	case SS_SINGLE:
+		return *(((InputReal32PtrsType)dataPtr)[0]);
+		break;
+	case SS_INT8:
+		return *(((InputInt8PtrsType)dataPtr)[0]);
+		break;
+	case SS_UINT8:
+		return *(((InputUInt8PtrsType)dataPtr)[0]);
+		break;
+	case SS_INT16:
+		return *(((InputInt16PtrsType)dataPtr)[0]);
+		break;
+	case SS_UINT16:
+		return *(((InputUInt16PtrsType)dataPtr)[0]);
+		break;
+	case SS_INT32:
+		return *(((InputInt32PtrsType)dataPtr)[0]);
+		break;
+	case SS_UINT32:
+		return *(((InputUInt32PtrsType)dataPtr)[0]);
+		break;
+	case SS_BOOLEAN:
+		return (((InputBooleanPtrsType)dataPtr)[0]) ? 1.0 : 0.0;
+		break;
+	default:
+		throw ::CreateException("Input %d has invalid type %d.", port, dataType);
+		break;
+	}
+}
+void SetOutputAsBool(SimStruct* S, int_T port, bool value)
 {
 	DTypeId   dataType = ssGetOutputPortDataType(S, port);
 	void* dataPtr = ssGetOutputPortSignal(S, port);
@@ -239,137 +177,106 @@ inline void setOutputAsBool(SimStruct* S, int_T port, bool value)
 		break;
 	}
 }
-
-/* Write block inputs to PLCSIM Advanced */
-static void ReadInputs(SimStruct* S, IInstance* instance)
+void SetOutputVoltage(SimStruct* S, const int_T port, const double supplyVoltage, const bool value)
 {
-	if (instance == 0)
-		return;
-	int_T numInputPorts = ssGetNumInputPorts(S);
+	const double voltage = value ? supplyVoltage : 0.0;
+
+	DTypeId   dataType = ssGetOutputPortDataType(S, port);
+	void* dataPtr = ssGetOutputPortSignal(S, port);
+	switch (dataType)
+	{
+	case SS_DOUBLE:
+		*((real_T*)dataPtr) = static_cast<real_T>(voltage);
+		break;
+	case SS_SINGLE:
+		*((real32_T*)dataPtr) = static_cast<real32_T>(voltage);
+		break;
+	case SS_INT8:
+		*((int8_T*)dataPtr) = static_cast<int8_T>(voltage + 0.5);
+		break;
+	case SS_UINT8:
+		*((uint8_T*)dataPtr) = static_cast<uint8_T>(voltage + 0.5);
+		break;
+	case SS_INT16:
+		*((int16_T*)dataPtr) = static_cast<int16_T>(voltage + 0.5);
+		break;
+	case SS_UINT16:
+		*((uint16_T*)dataPtr) = static_cast<uint16_T>(voltage + 0.5);
+		break;
+	case SS_INT32:
+		*((int32_T*)dataPtr) = static_cast<int32_T>(voltage + 0.5);
+		break;
+	case SS_UINT32:
+		*((uint32_T*)dataPtr) = static_cast<uint32_T>(voltage + 0.5);
+		break;
+	case SS_BOOLEAN:
+		*((boolean_T*)dataPtr) = static_cast<boolean_T>(value);
+		break;
+	default:
+		throw ::CreateException("Output %d has invalid type %d.", port, dataType);
+		break;
+	}
+}
+
+/**
+** Write block inputs to PLCSIM Advanced 
+**/
+const double ReadBlockInputs(SimStruct* S, PLCConnection* plcConnection)
+{
+	double supplyVoltage;
+	if (plcConnection == NULL || !plcConnection->isInitialized())
+		throw ::CreateException("PLC not initialized!");
+	int_T startPort;
+	if (plcConnection->isSupplyVoltageExplicit())
+	{
+		supplyVoltage = ::GetInputAsReal(S, 0);
+		startPort = 1;
+	}
+	else
+		startPort = 0;
+	int_T numInputPorts = plcConnection->getInputPortCount();
 	for (int_T i = 0; i < numInputPorts; i++)
 	{
-		bool input = getInputAsBool(S, i);
-		int_T byte = i/8;
+		bool input = ::GetInputAsBool(S, startPort+i);
+		int_T byte = i / 8;
 		int_T bit = i % 8;
-		enum ERuntimeErrorCode srec = instance->WriteBit(SRA_INPUT, (UINT32)byte, (UINT8)bit, input);
+		enum ERuntimeErrorCode srec = plcConnection->getInstance()->WriteBit(SRA_INPUT, (UINT32)byte, (UINT8)bit, input);
 		if (srec != SREC_OK)
 		{
 			throw ::CreatePLCException(srec, "Could not set input %%I%d.%d od PLC.", byte, bit);
 		}
 	}
+	return supplyVoltage;
 }
 
-/* Read block outputs from PLCSIM Advanced */
-static void WriteOutputs(SimStruct *S, IInstance* instance)
+/**
+** Read block outputs from PLCSIM Advanced 
+**/
+void WriteBlockOutputs(SimStruct* S, PLCConnection* plcConnection, double supplyVoltage)
 {
-	int_T numOutputPorts = ssGetNumOutputPorts(S);
-
+	if (plcConnection == NULL || !plcConnection->isInitialized())
+		throw ::CreateException("PLC not initialized!");
+	int_T numOutputPorts = plcConnection->getOutputPortCount();
+	int_T startPort;
+	if (plcConnection->isSupplyVoltageExplicit())
+	{
+		SetOutputVoltage(S, 0, supplyVoltage, false);
+		startPort = 1;
+	}
+	else
+		startPort = 0;
 	for (int_T i = 0; i < numOutputPorts; i++)
 	{
-		//bool *output = (bool*)ssGetOutputPortSignal(S,i);
-		int_T byte = i/8;
+		int_T byte = i / 8;
 		int_T bit = i % 8;
-		if (instance == 0)
-			setOutputAsBool(S, i, false);
-		else
-		{
-			bool output;
-			enum ERuntimeErrorCode srec = instance->ReadBit(SRA_OUTPUT, (UINT32)byte, (UINT8)bit, &output);
-			if (srec != SREC_OK)
-			{
-				throw ::CreatePLCException(srec, "Could not read output %%Q%d.%d od PLC.", byte, bit);
-			}
-			setOutputAsBool(S, i, output);
-		}
-	}
-}
 
-/* Execute a simulation step of the PLC emulation, using time synchronization with the Simulink time. */
-static void ExecuteSynchronizedSimulationStep(SimStruct *S)
-{
-	PLCConnection* plc = getPLC(S);
-	if(plc == NULL)
-	{
-		return;
-		ssSetErrorStatus(S,"PLC connection not initialized!");
-	}
-	time_T currentSimulinkTime = ssGetT(S);
-	time_T currentPLCSimTime = ConvertPLCSimTimeToSimulinkTime(plc->GetInstance()->GetSystemTime());
-
-	// Read the current inputs from Simulink if the PLCSim time is at or beyond the Simulink time. 
-	if (currentPLCSimTime >= currentSimulinkTime)
-	{
-		ReadInputs(S, plc->GetInstance());
-	}
-
-	// Execute PLCSim if the PLCSim time is before or at the Simulink time. The PLCSim inputs have already been
-	// updated in this same simulation step or in a previous simulation step.
-	if (currentPLCSimTime <= currentSimulinkTime)
-	{
-#if ExecuteRunNextCycleLoop
-		// Execute PLC cycles until the current simulation time is reached.
-		do
-		{
-			// First, write the outputs from the previous cycle. These values will be the result of the 
-			// current simulation step, if this is the last iteration of the while loop.
-			WriteOutputs(S, plc->GetInstance());
-			
-			// Execute the next PLC cycle.
-			enum ERuntimeErrorCode srec = plc->GetInstance()->RunNextCycle();
-			if (srec != SREC_OK)
-			{
-				throw ::CreatePLCException(srec, "Could not run next PLC cycle.");
-				return;
-			}
-
-			try
-			{
-				plc->WaitForEndOfCycle();
-			}
-			catch (std::exception e)
-			{
-				const char* message = e.what();
-				ssSetErrorStatus(S, message);
-				return;
-	}
-
-			// Get the new PLCSim time
-			currentPLCSimTime = ConvertPLCSimTimeToSimulinkTime(plc->GetInstance()->GetSystemTime());
-
-		} while (currentPLCSimTime <= currentSimulinkTime);
-#endif
-#if UseTimespanMode
-		// This code needs to be reviewed. StartProcessing executes beyond the current simulation time from Simulink.
-
-		INT64 stepDuration_ns = (currentSimulinkTime - currentPLCSimTime) * 1000000000;
-
-		// Execute the next PLC cycles.
-		enum ERuntimeErrorCode srec = plc->GetInstance()->StartProcessing(stepDuration_ns);
+		bool output;
+		enum ERuntimeErrorCode srec = plcConnection->getInstance()->ReadBit(SRA_OUTPUT, (UINT32)byte, (UINT8)bit, &output);
 		if (srec != SREC_OK)
 		{
-			PrintFormattedPLCSimError(srec, "StartProcessing");
-			return;
+			throw ::CreatePLCException(srec, "Could not read output %%Q%d.%d od PLC.", byte, bit);
 		}
-
-		try
-		{
-			plc->WaitForEndOfCycle();
-		}
-		catch (std::exception e)
-		{
-			const char* message = e.what();
-			ssSetErrorStatus(S, message);
-			return;
-		}
-
-		// Now write the outputs from the last cycle. These values will be the result of the 
-		// current simulation step. This is actually incorrect, because the PLCSim time is beyond the Simulink time.
-		WriteOutputs(S, plc->GetInstance());
-#endif
-
-		// Now read the current inputs from Simulink, because the PLCSim time is beyond the Simulink time.
-		// These inputs will be used in the following simulation step.
-		ReadInputs(S, plc->GetInstance());
+		SetOutputVoltage(S, startPort+i, supplyVoltage, output);
 	}
 }
 
@@ -377,9 +284,16 @@ static void ExecuteSynchronizedSimulationStep(SimStruct *S)
 
 void mdlCheckParameters(SimStruct *S)
 {
-	::PrintText("mdlCheckParameters");
+	int_T numParams = ssGetSFcnParamsCount(S);
+	if(numParams != BLOCK_PARAMETERS_LAST + 1)
+	{
+		std::string message = ::FormatText("Invalid number of Block parameters. Expected %d, found %d.", BLOCK_PARAMETERS_LAST + 1, numParams);
+		ssSetErrorStatus(S, message.c_str());
+		return;
+	}
+
 	// InstanceName
-	const mxArray *instanceNameParam = ssGetSFcnParam(S,ParameterIndex_InstanceName);
+	const mxArray *instanceNameParam = ssGetSFcnParam(S,BlockParameter_InstanceName);
 	DTypeId instanceNameType = ssGetDTypeIdFromMxArray(instanceNameParam);
 	size_t instanceNameLength = mxGetNumberOfElements(instanceNameParam);
 	if (instanceNameType != INVALID_DTYPE_ID || instanceNameLength > PLCConnection::maxInstanceNameLength)
@@ -389,7 +303,7 @@ void mdlCheckParameters(SimStruct *S)
 	}
 
 	// InputPortCount
-	const mxArray *inputPortCountParam = ssGetSFcnParam(S,ParameterIndex_InputPortCount);
+	const mxArray *inputPortCountParam = ssGetSFcnParam(S,BlockParameter_InputPortCount);
 	DTypeId inputPortCountType = ssGetDTypeIdFromMxArray(inputPortCountParam);
 	size_t inputPortCountLength = mxGetNumberOfElements(inputPortCountParam);
 	if (inputPortCountType != SS_DOUBLE || inputPortCountLength != 1)
@@ -405,7 +319,7 @@ void mdlCheckParameters(SimStruct *S)
 	}
 	
 	// OutputPortCount
-	const mxArray *outputPortCountParam = ssGetSFcnParam(S,ParameterIndex_OutputPortCount);
+	const mxArray *outputPortCountParam = ssGetSFcnParam(S,BlockParameter_OutputPortCount);
 	DTypeId outputPortCountType = ssGetDTypeIdFromMxArray(outputPortCountParam);
 	size_t outputPortCountLength = mxGetNumberOfElements(outputPortCountParam);
 	if (outputPortCountType != SS_DOUBLE || outputPortCountLength != 1)
@@ -421,7 +335,7 @@ void mdlCheckParameters(SimStruct *S)
 	}
 
 	// ScaleFactor
-	const mxArray *scaleFactorParam = ssGetSFcnParam(S,ParameterIndex_ScaleFactor);
+	const mxArray *scaleFactorParam = ssGetSFcnParam(S,BlockParameter_ScaleFactor);
 	DTypeId scaleFactorType = ssGetDTypeIdFromMxArray(scaleFactorParam);
 	size_t scaleFactorLength = mxGetNumberOfElements(scaleFactorParam);
 	if (scaleFactorType != SS_DOUBLE || scaleFactorLength != 1)
@@ -429,39 +343,39 @@ void mdlCheckParameters(SimStruct *S)
 		ssSetErrorStatus(S,"Invalid parameter value for ScaleFactor");
 		return;
 	}
-	
-	// Synchronization
-	const mxArray *synchronizationParam = ssGetSFcnParam(S,ParameterIndex_Synchronization);
-	DTypeId synchronizationType = ssGetDTypeIdFromMxArray(synchronizationParam);
-	size_t synchronizationLength = mxGetNumberOfElements(synchronizationParam);
-	if (synchronizationType != SS_DOUBLE || synchronizationLength != 1)
+
+	// ScaleFactor
+	const mxArray* supplyVoltageExplicitParam = ssGetSFcnParam(S, BlockParameter_SupplyVoltageExplicit);
+	DTypeId supplyVoltageExplicitType = ssGetDTypeIdFromMxArray(supplyVoltageExplicitParam);
+	size_t supplyVoltageExplicitLength = mxGetNumberOfElements(supplyVoltageExplicitParam);
+	if (supplyVoltageExplicitType != SS_DOUBLE || supplyVoltageExplicitLength != 1)
 	{
-		ssSetErrorStatus(S,"Invalid parameter value for Synchronization");
+		ssSetErrorStatus(S, "Invalid parameter value for SupplyVoltageExplicit");
 		return;
 	}
 }
 
 void mdlInitializeSizes(SimStruct *S)
 {
-	::PrintText("mdlInitializeSizes");
 	ssSetNumPWork(S, 1);
-	ssSetOptions(S,SS_OPTION_CALL_TERMINATE_ON_EXIT);
+	ssSetOptions(S, SS_OPTION_CALL_TERMINATE_ON_EXIT);
+	ssSetNumSFcnParams(S, BLOCK_PARAMETERS_LAST+1);  /* Number of expected parameters */
 
-	ssSetNumSFcnParams(S, SFCT_NUM_PARAMETERS);  /* Number of expected parameters */
+    mdlCheckParameters(S);
+    if (ssGetErrorStatus(S) != 0) 
+		return;
 
-    if (ssGetNumSFcnParams(S) == ssGetSFcnParamsCount(S))
-	{
-        mdlCheckParameters(S);
-        if (ssGetErrorStatus(S) != 0) 
-			return;
-    }
-	else 
-		return; /* Parameter mismatch reported by the Simulink engine */
-
-	const mxArray *inputPortCountParam = ssGetSFcnParam(S,ParameterIndex_InputPortCount);
+	const mxArray* inputPortCountParam = ssGetSFcnParam(S,BlockParameter_InputPortCount);
 	int_T numInputPorts = (int)*(real_T*)mxGetData(inputPortCountParam);
-	const mxArray *outputPortCountParam = ssGetSFcnParam(S,ParameterIndex_OutputPortCount);
+	const mxArray* outputPortCountParam = ssGetSFcnParam(S,BlockParameter_OutputPortCount);
 	int_T numOutputPorts = (int)*(real_T*)mxGetData(outputPortCountParam);
+	const mxArray* supplyVoltageExplicitParam = ssGetSFcnParam(S, BlockParameter_SupplyVoltageExplicit);
+	bool supplyVoltageExplicit = *(real_T*)mxGetData(supplyVoltageExplicitParam) != 0;
+	if (supplyVoltageExplicit)
+	{
+		numInputPorts+=1;
+		numOutputPorts += 1;
+	}
 
 	if (!ssSetNumInputPorts(S, numInputPorts)) 
 		return;
@@ -482,33 +396,34 @@ void mdlInitializeSizes(SimStruct *S)
     ssSetNumSampleTimes(S,1);
 }
 
-void mdlInitializeSampleTimes(SimStruct *S)
+void mdlInitializeSampleTimes(SimStruct* S)
 {
-	::PrintText("mdlInitializeSampleTimes");
-	
-	const mxArray* sampleTimeParam = ssGetSFcnParam(S, ParameterIndex_SampleTime);
+	const mxArray* sampleTimeParam = ssGetSFcnParam(S, BlockParameter_SampleTime);
 	real_T sampleTime = *(real_T*)mxGetData(sampleTimeParam);
 	ssSetSampleTime(S, 0, sampleTime);
     ssSetOffsetTime(S, 0, 0.0);
 }
 
-void mdlStart(SimStruct *S)
+void mdlStart(SimStruct* S)
 {
-	::PrintText("mdlStart");
+	mdlCheckParameters(S);
+
+	// Read parameters.
 	char_T instanceName[PLCConnection::maxInstanceNameLength + 1];
-	const mxArray *instanceNameParam = ssGetSFcnParam(S,ParameterIndex_InstanceName);
+	const mxArray* instanceNameParam = ssGetSFcnParam(S,BlockParameter_InstanceName);
 	mxGetString(instanceNameParam, instanceName, PLCConnection::maxInstanceNameLength+1);
-	const mxArray *inputPortCountParam = ssGetSFcnParam(S,ParameterIndex_InputPortCount);
+	const mxArray* inputPortCountParam = ssGetSFcnParam(S,BlockParameter_InputPortCount);
 	int inputPortCount = (int)*(real_T*)mxGetData(inputPortCountParam);
-	const mxArray *outputPortCountParam = ssGetSFcnParam(S,ParameterIndex_OutputPortCount);
+	const mxArray* outputPortCountParam = ssGetSFcnParam(S,BlockParameter_OutputPortCount);
 	int outputPortCount = (int)*(real_T*)mxGetData(outputPortCountParam);
-	const mxArray *scaleFactorParam = ssGetSFcnParam(S,ParameterIndex_ScaleFactor);
+	const mxArray* scaleFactorParam = ssGetSFcnParam(S,BlockParameter_ScaleFactor);
 	double scaleFactor = *(real_T*)mxGetData(scaleFactorParam);
-	const mxArray *synchronizationParam = ssGetSFcnParam(S,ParameterIndex_Synchronization);
-	bool synchronization = (*(real_T*)mxGetData(synchronizationParam) != 0);
+	const mxArray* supplyVoltageExplicitParam = ssGetSFcnParam(S, BlockParameter_SupplyVoltageExplicit);
+	bool supplyVoltageExplicit = *(real_T*)mxGetData(supplyVoltageExplicitParam) != 0;
 	
-	PLCConnection* plc = new PLCConnection(inputPortCount, outputPortCount, scaleFactor, synchronization, instanceName);
+	// Initialize PLC
 	::PrintText("Initializing PLC connection...");
+	PLCConnection* plc = new PLCConnection(inputPortCount, outputPortCount, scaleFactor, instanceName, supplyVoltageExplicit);
 	try
 	{
 		plc->initialize(false);
@@ -521,117 +436,93 @@ void mdlStart(SimStruct *S)
 		ssSetErrorStatus(S, message);
 		return;
 	}
+	::SetBlockPLC(S, plc);
 	::PrintText("PLC connection initialized!");
-	::PrintText("Synchronizing clocks...");
-	// Set time in PLCSim from simulation start time of Simulink
-	time_T simulinkStartTime = ssGetTStart(S);
-	plc->GetInstance()->SetSystemTime(ConvertSimulinkTimeToPLCSimTime(simulinkStartTime));
-	
-	setPLC(S, plc);
-	::PrintText("Clocks synchronized!");
 
-	::PrintText("Starting PLC program...");
-	enum ERuntimeErrorCode srec = plc->GetInstance()->Run();
+	// Set time in PLCSim from simulation start time of Simulink
+	::PrintText("Synchronizing clocks...");
+	time_T simulinkStartTime = ssGetTStart(S);
+	enum ERuntimeErrorCode srec = plc->getInstance()->SetSystemTime(::ConvertSimulinkTimeToPLCSimTime(simulinkStartTime));
 	if (srec != SREC_OK)
 	{
+		// we do not have to uninitialize PLC, since this is done in mdlTerminate which is called immediately after setting the error status.
+		ssSetErrorStatus(S, "Could not synchronize clocks between PLC and Simulink!");
+		return;
+	}
+	::PrintText("Clocks synchronized!");
+
+	// Start PLC
+	::PrintText("Starting PLC program...");
+	srec = plc->getInstance()->Run();
+	if (srec != SREC_OK)
+	{
+		// we do not have to uninitialize PLC, since this is done in mdlTerminate which is called immediately after setting the error status.
 		ssSetErrorStatus(S, "Could not start PLC program!");
 		return;
 	}
 	::PrintText("PLC program started...");
 }
 
-static void mdlOutputs(SimStruct *S, int_T tid)
+void mdlOutputs(SimStruct *S, int_T tid)
 {
-	PLCConnection* plc = getPLC(S);
+	PLCConnection* plc = GetBlockPLC(S);
 	if(plc == NULL)
 	{
 		ssSetErrorStatus(S,"PLC connection not initialized!");
 		return;
 	}
-	/*if(plc->GetSynchronizationMethod() != PLCConnection::NoSync &&  plc->IsTimeSynchronization())
+
+	// Read block inputs from Simulink and send them to the inputs of the PLC.
+	double supplyVoltage;
+	try
 	{
-		try
-		{
-			ExecuteSynchronizedSimulationStep(S);
-		}
-		catch (std::exception e)
-		{
-			const char* message = e.what();
-			ssSetErrorStatus(S, message);
-			return;
-		}
+		supplyVoltage = ::ReadBlockInputs(S, plc);
 	}
-	else*/
+	catch (std::exception e)
 	{
-		// Time synchronization is disabled. Run exactly one PLC cycle for every simulation step.
-		// The time in Simulink and in PLCSIM Advanced will deviate arbitrarily.
+		const char* message = e.what();
+		ssSetErrorStatus(S, message);
+		return;
+	}
 
-		// First, write the outputs from the previous cycle. These values will be the result of the 
-		// current simulation step.
-		try
-		{
-			WriteOutputs(S, plc->GetInstance());
-		}
-		catch (std::exception e)
-		{
-			const char* message = e.what();
-			ssSetErrorStatus(S, message);
-			return;
-		}
-		
-		// Now read the current inputs from Simulink, to be used for the next PLC cycle.
-		try
-		{
-			ReadInputs(S, plc->GetInstance());
-		}
-		catch (std::exception e)
-		{
-			const char* message = e.what();
-			ssSetErrorStatus(S, message);
-			return;
-		}
-
-		if (plc->GetSynchronizationMethod() != PLCConnection::NoSync)
-		{
-			// Execute the next PLC cycle.
-			enum ERuntimeErrorCode srec = plc->GetInstance()->RunNextCycle();
-			if (srec != SREC_OK)
-			{
-				ssSetErrorStatus(S, ::FormatPLCError(srec, "Could not run next cycle of PLC.").c_str());
-				return;
-			}
-
-			try
-			{
-				plc->WaitForEndOfCycle();
-			}
-			catch (std::exception e)
-			{
-				const char* message = e.what();
-				ssSetErrorStatus(S, message);
-				return;
-			}
-		}
+	// Now, read PLC outputs and set them as block outputs
+	try
+	{
+		::WriteBlockOutputs(S, plc, supplyVoltage);
+	}
+	catch (std::exception e)
+	{
+		const char* message = e.what();
+		ssSetErrorStatus(S, message);
+		return;
 	}
 }
 
-static void mdlTerminate(SimStruct *S)
+void mdlTerminate(SimStruct *S)
 {
-	::PrintText("mdlTerminate");
-	PLCConnection* plc = getPLC(S);
+	PLCConnection* plc = ::GetBlockPLC(S);
 	if(plc == NULL)
 	{
-		// OK, we don't have anything to do!
+		// We don't have anything to do, PLC was never initialized!
 		return;
 	}
 	
 	::PrintText("Stopping PLC...");
-	plc->GetInstance()->SetOperatingMode(SROM_DEFAULT);
-	enum ERuntimeErrorCode srec = plc->GetInstance()->Stop();
+	plc->getInstance()->SetOperatingMode(SROM_DEFAULT);
+	enum ERuntimeErrorCode srec = plc->getInstance()->Stop();
+	if (srec == SREC_OK)
+	{
+		::PrintText("Stopped PLC.");
+	}
+	else
+	{
+		std::string message = FormatPLCError(srec, "Could not stop PLC.");
+		ssSetErrorStatus(S, message.c_str());
+	}
 	
-	::PrintText("Disconnecting from PLC...");
 	delete(plc);
-	setPLC(S, NULL);
+	SetBlockPLC(S, NULL);
+	::PrintText("Disconnected from PLC.");
 }
 
 /* Function: mdlSetInputPortDataType ==========================================
@@ -644,7 +535,7 @@ static void mdlTerminate(SimStruct *S)
  *    the data type of the given port can also have their data types set via
  *    calls to ssSetInputPortDataType or ssSetOutputPortDataType.
  */
-static void mdlSetInputPortDataType(SimStruct* S,
+void mdlSetInputPortDataType(SimStruct* S,
 	int       port,
 	DTypeId   dataType)
 {
@@ -652,7 +543,7 @@ static void mdlSetInputPortDataType(SimStruct* S,
 
 	if (port < numInputPorts) 
 	{
-		if (checkIODataType(dataType))
+		if (IsCompatibleIODataType(dataType))
 		{
 			ssSetInputPortDataType(S, port, dataType);
 		}
@@ -682,7 +573,7 @@ static void mdlSetInputPortDataType(SimStruct* S,
  *    the data type of the given port can also have their data types set via
  *    calls to ssSetInputPortDataType or ssSetOutputPortDataType.
  */
-static void mdlSetOutputPortDataType(SimStruct* S,
+void mdlSetOutputPortDataType(SimStruct* S,
 	int       port,
 	DTypeId   dataType)
 {
@@ -690,7 +581,7 @@ static void mdlSetOutputPortDataType(SimStruct* S,
 
 	if (port < numOutputPorts)
 	{
-		if (checkIODataType(dataType))
+		if (IsCompatibleIODataType(dataType))
 		{
 			ssSetOutputPortDataType(S, port, dataType);
 		}
@@ -715,7 +606,7 @@ static void mdlSetOutputPortDataType(SimStruct* S,
  *    candidates for dynamically typed ports. This function must set the data
  *    type of all dynamically typed ports.
  */
-static void mdlSetDefaultPortDataTypes(SimStruct* S)
+void mdlSetDefaultPortDataTypes(SimStruct* S)
 {
 	int_T numInputPorts = ssGetNumInputPorts(S);
 	int_T numOutputPorts = ssGetNumOutputPorts(S);

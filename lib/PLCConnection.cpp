@@ -3,25 +3,15 @@
 #include <string>
 #include "helper_functions.h"
 
-
-
-//TODO: find out how to pass user data (pointer to PLCConnection) to this callback function and make it work again.	
-/* Callback function for end-of-cycle event from PLCSIM Advanced */
-static void EndOfCycle(IInstance* in_Sender, ERuntimeErrorCode in_ErrorCode, SYSTEMTIME in_SystemTime, INT64 CycleTime_ns, UINT32 CycleCount)
-{
-	/*if(syncMethod == SyncWithSemaphore)
-		ReleaseSemaphore(Semaphore,1,0);
-	else if(syncMethod == SyncWithFlag)
-		waiting = false;*/
-}
-
-/* Callback function for PLCSIM Advanced */
+/**
+** Callback function which is called by PLCSIM Advanced  when configuration changes
+**/
 static void ConfigurationChanged(IInstance* in_Sender, ERuntimeErrorCode in_ErrorCode, SYSTEMTIME in_SystemTime, EInstanceConfigChanged in_InstanceConfigChanged, UINT32 in_Param1, UINT32 in_Param2, UINT32 in_Param3, UINT32 in_Param4)
 {
 }
-
-PLCConnection::PLCConnection(int inputPortCount, int outputPortCount, double scaleFactor, bool synchronization, char* instanceName) :
-	InputPortCount(inputPortCount), OutputPortCount(outputPortCount), ScaleFactor(scaleFactor), TimeSynchronization(synchronization)
+PLCConnection::PLCConnection(const int inputPortCount, const int outputPortCount, const double scaleFactor, const char* instanceName, const bool supplyVoltageExplicit):
+	InputPortCount(inputPortCount), OutputPortCount(outputPortCount), ScaleFactor(scaleFactor), SupplyVoltageExplicit(supplyVoltageExplicit),
+	PLCSimInstance(NULL), RuntimeManager(NULL)
 {
 	size_t convertedChars;
 	mbstowcs_s(&convertedChars, InstanceNameWS, maxInstanceNameLength + 1, instanceName, _TRUNCATE);
@@ -30,43 +20,51 @@ PLCConnection::~PLCConnection()
 {
 	uninitialize();
 }
-bool PLCConnection::IsTimeSynchronization()
-{
-	return TimeSynchronization;
-}
-PLCConnection::SynchronizationMethod PLCConnection::GetSynchronizationMethod()
-{
-	return syncMethod;
-}
-IInstance* PLCConnection::GetInstance()
+IInstance* PLCConnection::getInstance()
 {
 	return PLCSimInstance;
 }
 
-
+const bool PLCConnection::isSupplyVoltageExplicit() noexcept
+{
+	return SupplyVoltageExplicit;
+}
+const int PLCConnection::getInputPortCount() noexcept
+{
+	return InputPortCount;
+}
+const int PLCConnection::getOutputPortCount() noexcept
+{
+	return OutputPortCount;
+}
 
 void PLCConnection::uninitialize()
 {
 	/* Shut down PLCSIM Advanced interface, disconnect from runtime manager and return to the initial system state */
-	if (PLCSimInstance != 0)
+	if (PLCSimInstance != NULL)
 	{
 		::PrintText("Disconnecting from PLC...");
 		ERuntimeErrorCode srec = DestroyInterface(PLCSimInstance);
-		if (srec == SREC_OK)
-			PLCSimInstance = 0;
-		else
-			throw ::CreatePLCException(srec, "Could not destroy instance interface.\n");
+		if (srec != SREC_OK)
+			throw ::CreatePLCException(srec, "Could not destroy PLC interface.\n");
+		PLCSimInstance = NULL;
+		::PrintText("Disconnected from PLC.");
 	}
 
-	if (RuntimeManager != 0)
+	if (RuntimeManager != NULL)
 	{
-		::PrintText("Deactivating API...");
+		::PrintText("Deactivating PLCSim Advanced API...");
 		ERuntimeErrorCode srec = ShutdownAndFreeApi(RuntimeManager);
-		if (srec == SREC_OK)
-			RuntimeManager = 0;
-		else
-			throw CreatePLCException(srec, "Could not shutdown PLCSIM Advanced API.\n");
+		if (srec != SREC_OK)
+			throw ::CreatePLCException(srec, "Could not shutdown PLCSIM Advanced API.\n");
+		RuntimeManager = NULL;
+		::PrintText("PLCSim Advanced API deactivated.");
 	}
+}
+
+const bool PLCConnection::isInitialized() noexcept
+{
+	return RuntimeManager != NULL && PLCSimInstance != NULL;
 }
 
 /* Main startup procedure for the PLCSIM Advanced S-Function */
@@ -74,24 +72,14 @@ void PLCConnection::initialize(bool createNewInstanceIfNotExist)
 {
 	uninitialize();
 
-	if (RuntimeManager != 0 && PLCSimInstance != 0)
+	if (RuntimeManager != NULL && PLCSimInstance != NULL)
 		return;
 
 	enum ERuntimeErrorCode srec = InitializeApi(&RuntimeManager);
 	if (srec != SREC_OK)
 	{
 		uninitialize();
-		throw CreatePLCException(srec, "Could not initialize PLCSIM Advanced API.");
-	}
-
-	if (syncMethod == SyncWithSemaphore)
-	{
-		Semaphore = CreateSemaphore(0, 0, 1, 0);
-		if (!Semaphore)
-		{
-			uninitialize();
-			throw CreatePLCException(srec, "Could not initialize synchronization.");
-		}
+		throw ::CreatePLCException(srec, "Could not initialize PLCSIM Advanced API.");
 	}
 
 	srec = RuntimeManager->CreateInterface(InstanceNameWS, &PLCSimInstance);
@@ -103,13 +91,13 @@ void PLCConnection::initialize(bool createNewInstanceIfNotExist)
 			if (srec != SREC_OK)
 			{
 				uninitialize();
-				throw CreatePLCException(srec, "Could not create PLC instance %ls.", InstanceNameWS);
+				throw ::CreatePLCException(srec, "Could not create PLC instance %ls.", InstanceNameWS);
 			}
 			srec = PLCSimInstance->SetStoragePath(L"C:\\temp\\PLCConnection");
 			if (srec != SREC_OK)
 			{
 				uninitialize();
-				throw CreatePLCException(srec, "Could not set storage path of PLC instance %ls.", InstanceNameWS);
+				throw ::CreatePLCException(srec, "Could not set storage path of PLC instance %ls.", InstanceNameWS);
 			}
 
 			srec = PLCSimInstance->PowerOn();
@@ -120,67 +108,35 @@ void PLCConnection::initialize(bool createNewInstanceIfNotExist)
 			else if (srec == SREC_STORAGE_PATH_ALREADY_IN_USE)
 			{
 				uninitialize();
-				throw CreatePLCException(srec, "Could not set PLC %ls to ON state due to problem with storage path.", InstanceNameWS);
+				throw ::CreatePLCException(srec, "Could not set PLC %ls to ON state due to problem with storage path.", InstanceNameWS);
 			}
 			else if (srec != SREC_OK && srec != SREC_WARNING_ALREADY_EXISTS)
 			{
 				uninitialize();
-				throw CreatePLCException(srec, "Could not set PLC %ls to ON state.", InstanceNameWS);
+				throw ::CreatePLCException(srec, "Could not set PLC %ls to ON state.", InstanceNameWS);
 			}
 		}
 		else
 		{
-			throw CreatePLCException(srec, "PLC instance %ls does not exist.", InstanceNameWS);
+			throw ::CreatePLCException(srec, "PLC instance %ls does not exist.", InstanceNameWS);
 		}
 	}
 	else if (srec != SREC_OK)
 	{
 		uninitialize();
-		throw CreatePLCException(srec, "Could not connect to existing PLC instance %ls.", InstanceNameWS);
+		throw ::CreatePLCException(srec, "Could not connect to existing PLC instance %ls.", InstanceNameWS);
 	}
-	
-	if (syncMethod == SyncWithSemaphore || syncMethod == SyncWithFlag)
-		PLCSimInstance->RegisterOnEndOfCycleCallback(EndOfCycle);
-	else if (syncMethod == SyncWithEvent)
-		PLCSimInstance->RegisterOnEndOfCycleEvent();
 
 	PLCSimInstance->RegisterOnConfigurationChangedEvent();
 	PLCSimInstance->RegisterOnConfigurationChangedCallback(ConfigurationChanged);
 
-	if (syncMethod == NoSync)
-		PLCSimInstance->SetOperatingMode(SROM_DEFAULT);
-	else
-		PLCSimInstance->SetOperatingMode(SROM_SINGLE_STEP);
+	PLCSimInstance->SetOperatingMode(SROM_DEFAULT);
 
 
 	srec = PLCSimInstance->SetScaleFactor(ScaleFactor);
 	if (srec != SREC_OK)
 	{
 		uninitialize();
-		throw CreatePLCException(srec, "Could not set time scaling factor of PLC %ls.", InstanceNameWS);
-	}
-
-	return;
-}
-/* Wait for the end of the PLC cycle. */
-void PLCConnection::WaitForEndOfCycle()
-{
-	if (syncMethod == SyncWithSemaphore)
-	{
-		WaitForSingleObject(Semaphore, 10 * 1000);
-	}
-	else if (syncMethod == SyncWithFlag)
-	{
-		waiting = true;
-		while (waiting)
-			Sleep(10);
-	}
-	else if (syncMethod == SyncWithEvent)
-	{
-		// Wait up to 10 seconds for the end of the cycle.
-		if (!PLCSimInstance->WaitForOnEndOfCycleEvent(10 * 1000))
-		{
-			throw ::CreateException("Timeout ocurred while waiting for end of cycle from PLCSIM Advanced.");
-		}
+		throw ::CreatePLCException(srec, "Could not set time scaling factor of PLC %ls.", InstanceNameWS);
 	}
 }
