@@ -11,6 +11,10 @@ bld/
 [Bb]in/
 [Dd]eploy/
 [Pp]ackages/
+slprj/
+
+% Simulink
+*.autosave
 
 # Visual C++ project user files
 *.vcxproj.user
