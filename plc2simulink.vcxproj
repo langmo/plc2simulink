@@ -157,15 +157,21 @@
       <deployBaseDir>$(SolutionDir)deploy\$(Configuration)\$(Platform)\</deployBaseDir>
       <deployDir>$(DeployBaseDir)$(ProjectName)\</deployDir>
       <deployZip>$(DeployBaseDir)$(ProjectName).zip</deployZip>
-      <resources>resources</resources>
+      <srcResourcesDir>$(SolutionDir)resources\</srcResourcesDir>
+	  <srcIncludeDir>$(SolutionDir)include\</srcIncludeDir>
+	  <srcLibDir>$(SolutionDir)lib\</srcLibDir>
     </PropertyGroup>
     <Delete Files="$(deployZip)" />
     <Delete Files="$(deployDir)**\*.*" />
     <ItemGroup>
-      <mainFiles Include="$(SolutionDir)resources\*.*" />
+      <mainFiles Include="$(srcResourcesDir)*.*" />
       <mainFiles Include="$(OutDir)$(ProjectName)$(TargetExt)" />
+	  <includeFiles Include="$(srcIncludeDir)*.*" />
+	  <libFiles Include="$(srcLibDir)*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(mainFiles)" DestinationFolder="$(DeployDir)" />
+	<Copy SourceFiles="@(includeFiles)" DestinationFolder="$(DeployDir)src\include\" />
+	<Copy SourceFiles="@(libFiles)" DestinationFolder="$(DeployDir)src\lib\" />
     <ItemGroup>
       <zipFiles Include="$(deployDir)**\*.*" />
     </ItemGroup>

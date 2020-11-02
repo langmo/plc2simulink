@@ -1,0 +1,143 @@
+<deployment-project plugin="plugin.toolbox" plugin-version="1.0">
+  <configuration build-checksum="1785378602" file="C:\plc2simulink\resources\plc2simulink.prj" location="C:\plc2simulink\resources" name="plc2simulink" target="target.toolbox" target-name="Package Toolbox">
+    <param.appname>plc2simulink</param.appname>
+    <param.authnamewatermark>Moritz Lang</param.authnamewatermark>
+    <param.email>moritz.lang@technikum-wien.at</param.email>
+    <param.company>FH Technikum Wien</param.company>
+    <param.summary>Simple toolbox to visualize TIA Portal models via PLCSim Advanced, mainly for teaching.</param.summary>
+    <param.description>Simple toolbox to visualize TIA Portal models via PLCSim Advanced, mainly for teaching.</param.description>
+    <param.screenshot>${PROJECT_ROOT}\plc2simulink.jpg</param.screenshot>
+    <param.version>1.0</param.version>
+    <param.output>${PROJECT_ROOT}\plc2simulink.mltbx</param.output>
+    <param.products.name />
+    <param.products.id />
+    <param.products.version />
+    <param.platforms />
+    <param.guid>24d9a15d-0065-42c7-ba8b-d69854834c09</param.guid>
+    <param.exclude.filters />
+    <param.exclude.pcodedmfiles>true</param.exclude.pcodedmfiles>
+    <param.examples />
+    <param.demosxml />
+    <param.apps />
+    <param.registered.apps />
+    <param.docs />
+    <param.getting.started.guide />
+    <param.matlabpath.excludes />
+    <param.javaclasspath.excludes />
+    <param.exported.on.package>false</param.exported.on.package>
+    <param.required.addons />
+    <param.matlab.project.id />
+    <param.matlab.project.name />
+    <param.release.start />
+    <param.release.end />
+    <param.release.current.only>false</param.release.current.only>
+    <param.compatiblity.windows>true</param.compatiblity.windows>
+    <param.compatiblity.macos>true</param.compatiblity.macos>
+    <param.compatiblity.linux>true</param.compatiblity.linux>
+    <param.compatiblity.matlabonline>true</param.compatiblity.matlabonline>
+    <param.installation.map />
+    <param.additional.sw.names />
+    <param.additional.sw.licenses />
+    <param.additional.sw.win.url />
+    <param.additional.sw.mac.url />
+    <param.additional.sw.linux.url />
+    <unset>
+      <param.version />
+      <param.output />
+      <param.products.name />
+      <param.products.id />
+      <param.products.version />
+      <param.platforms />
+      <param.exclude.filters />
+      <param.exclude.pcodedmfiles />
+      <param.examples />
+      <param.demosxml />
+      <param.apps />
+      <param.registered.apps />
+      <param.docs />
+      <param.getting.started.guide />
+      <param.matlabpath.excludes />
+      <param.javaclasspath.excludes />
+      <param.exported.on.package />
+      <param.required.addons />
+      <param.matlab.project.id />
+      <param.matlab.project.name />
+      <param.release.start />
+      <param.release.end />
+      <param.release.current.only />
+      <param.compatiblity.windows />
+      <param.compatiblity.macos />
+      <param.compatiblity.linux />
+      <param.compatiblity.matlabonline />
+      <param.installation.map />
+      <param.additional.sw.names />
+      <param.additional.sw.licenses />
+      <param.additional.sw.win.url />
+      <param.additional.sw.mac.url />
+      <param.additional.sw.linux.url />
+    </unset>
+    <fileset.rootdir>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink</file>
+    </fileset.rootdir>
+    <fileset.rootfiles>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\library_plc2simulink.slx</file>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\plc2simulink.mexw64</file>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\plc2simulink_build.m</file>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\PLCPneumaticCylinder.slx</file>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\PLCPong.slx</file>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\slblocks.m</file>
+      <file>C:\plc2simulink\deploy\Release\x64\plc2simulink\src</file>
+    </fileset.rootfiles>
+    <fileset.depfun.included />
+    <fileset.depfun.excluded />
+    <fileset.package />
+    <build-deliverables>
+      <file location="${PROJECT_ROOT}" name="plc2simulink.mltbx" optional="false">C:\plc2simulink\resources\plc2simulink.mltbx</file>
+    </build-deliverables>
+    <workflow />
+    <matlab>
+      <root>C:\Program Files\MATLAB\R2020a</root>
+      <toolboxes>
+        <toolbox name="matlabcoder" />
+        <toolbox name="embeddedcoder" />
+        <toolbox name="fixedpoint" />
+        <toolbox name="neuralnetwork" />
+      </toolboxes>
+      <toolbox>
+        <matlabcoder>
+          <enabled>true</enabled>
+        </matlabcoder>
+      </toolbox>
+      <toolbox>
+        <embeddedcoder>
+          <enabled>true</enabled>
+        </embeddedcoder>
+      </toolbox>
+      <toolbox>
+        <fixedpoint>
+          <enabled>true</enabled>
+        </fixedpoint>
+      </toolbox>
+      <toolbox>
+        <neuralnetwork>
+          <enabled>true</enabled>
+        </neuralnetwork>
+      </toolbox>
+    </matlab>
+    <platform>
+      <unix>false</unix>
+      <mac>false</mac>
+      <windows>true</windows>
+      <win2k>false</win2k>
+      <winxp>false</winxp>
+      <vista>false</vista>
+      <linux>false</linux>
+      <solaris>false</solaris>
+      <osver>10.0</osver>
+      <os32>false</os32>
+      <os64>true</os64>
+      <arch>win64</arch>
+      <matlab>true</matlab>
+    </platform>
+  </configuration>
+</deployment-project>
